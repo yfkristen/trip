@@ -843,7 +843,7 @@ const PHOTOS={"第二市場": "https://lh3.googleusercontent.com/place-photos/AG
 const LEGS={
  1:[[0,1,'🚗 約2.5小時'],[1,2,'🚗 8分'],[2,3,'🚗 8分'],[3,4,'🚗 10分'],[4,5,'🚗 8分'],[5,6,'🚶 2-5分']],
  2:[[0,1,'🚗 約10分'],[1,2,'🚗 約20分'],[2,4,'🚗 約40分'],[4,5,'🚗 35分']],
- 3:[[0,1,'🚗 5分'],[1,2,'🚗 5分'],[2,3,'🚗 約1小時'],[3,4,'🚶 3-5分']],
+ 3:[[0,1,'🚶 步行約10分'],[1,2,'🚶 步行約20分'],[2,0,'🚶 走回步道口取車'],[0,3,'🚗 開車下山約1小時'],[3,4,'🚶 3-5分']],
  4:[[2,3,'🚗 35-40分'],[3,4,'🚗 約1小時'],[4,5,'🚗 約2小時']]
 };
 const HOTEL_LEG={
@@ -876,6 +876,12 @@ function modeStyle(mode,color){
   if(mode==='cable') return {color:'#7048e8',weight:3,opacity:.9,dashArray:'1 7',lineCap:'round'};
   if(mode==='walk') return {color:'#868e96',weight:3,opacity:.9,dashArray:'1 7',lineCap:'round'};
   return {color:color,weight:4,opacity:.8,dashArray:'3 8',lineCap:'round',lineJoin:'round'};
+}
+function modeOf(label){
+  if(label.indexOf('🚶')>=0) return 'walk';
+  if(label.indexOf('🚢')>=0) return 'boat';
+  if(label.indexOf('🚡')>=0) return 'cable';
+  return 'car';
 }
 function legIcon(color,label,above){
   const ty=above?'-160%':'-50%';
@@ -923,47 +929,37 @@ DAYS.forEach(day=>{
     allBounds.push([s.lat,s.lng]);
     if(!s.alt && !s.noDrive) linePts.push([s.lat,s.lng]);
   });
-  const labels=[]; const lines=[]; const routes=[];
+  let segs;
   if(SEG[day.d]){
-    SEG[day.d].forEach(s=>{
-      const st=modeStyle(s.mode,color);
-      if(s.mode==='car' || s.mode==='walk'){
-        const draw=[s.a].concat(s.via||[]).concat([s.b]);
-        const pl=L.polyline(draw,st); lines.push(pl);
-        const mp=(s.via&&s.via.length)?s.via[Math.floor(s.via.length/2)]:[(s.a[0]+s.b[0])/2,(s.a[1]+s.b[1])/2];
-        const lc=(s.mode==='car')?color:st.color;
-        const m=L.marker(mp,{icon:legIcon(lc,s.label),interactive:false,keyboard:false,zIndexOffset:600});
-        labels.push(m); routes.push({line:pl, pts:[s.a,s.b], label:m, profile:(s.mode==='walk'?'foot':'car')});
-      } else {
-        const pl=L.polyline([s.a,s.b],st); lines.push(pl);
-        const mp=[(s.a[0]+s.b[0])/2,(s.a[1]+s.b[1])/2];
-        const m=L.marker(mp,{icon:legIcon(st.color,s.label),interactive:false,keyboard:false,zIndexOffset:600});
-        labels.push(m);
-      }
-    });
+    segs=SEG[day.d];
   } else {
-    const legTexts=[];
-    const hl=HOTEL_LEG[day.d]; if(hl) legTexts.push(hl.label);
-    (LEGS[day.d]||[]).forEach(([a,b,txt])=>legTexts.push(txt));
-    const el2=END_LEG[day.d]; if(el2) legTexts.push(el2.label);
-    if(hl && linePts.length) linePts.unshift([hl.lat,hl.lng]);
-    if(el2 && linePts.length) linePts.push([el2.lat,el2.lng]);
-    const via=VIA[day.d]||{};
-    const drawPts=[];
-    for(let i=0;i<linePts.length;i++){
-      drawPts.push(linePts[i]);
-      if(i<legTexts.length){
-        const A=linePts[i], B=linePts[i+1]; let lp;
-        if(via[i] && via[i].length){ via[i].forEach(v=>drawPts.push(v)); lp=via[i][Math.floor(via[i].length/2)]; }
-        else { lp=[(A[0]+B[0])/2,(A[1]+B[1])/2]; }
-        const m=L.marker(lp,{icon:legIcon(color,legTexts[i]),interactive:false,keyboard:false,zIndexOffset:600});
-        m._legIndex=i; labels.push(m);
-      }
-    }
-    const line=L.polyline(drawPts,{color:color,weight:4,opacity:.8,dashArray:'3 8',lineCap:'round',lineJoin:'round'});
-    line._labels=labels; lines.push(line);
-    routes.push({line:line, pts:linePts.slice(), whole:true});
+    segs=[];
+    const drive=day.stops.filter(s=>!s.alt && !s.noDrive);
+    const hl=HOTEL_LEG[day.d], el=END_LEG[day.d];
+    if(hl && drive.length) segs.push({a:[hl.lat,hl.lng], b:[drive[0].lat,drive[0].lng], mode:modeOf(hl.label), label:hl.label});
+    (LEGS[day.d]||[]).forEach(([a,b,txt])=>{
+      const sa=day.stops[a], sb=day.stops[b];
+      segs.push({a:[sa.lat,sa.lng], b:[sb.lat,sb.lng], mode:modeOf(txt), label:txt});
+    });
+    if(el && drive.length) segs.push({a:[drive[drive.length-1].lat,drive[drive.length-1].lng], b:[el.lat,el.lng], mode:modeOf(el.label), label:el.label});
   }
+  const labels=[]; const lines=[]; const routes=[];
+  segs.forEach(s=>{
+    const st=modeStyle(s.mode,color);
+    if(s.mode==='car' || s.mode==='walk'){
+      const draw=[s.a].concat(s.via||[]).concat([s.b]);
+      const pl=L.polyline(draw,st); lines.push(pl);
+      const mp=(s.via&&s.via.length)?s.via[Math.floor(s.via.length/2)]:[(s.a[0]+s.b[0])/2,(s.a[1]+s.b[1])/2];
+      const lc=(s.mode==='car')?color:st.color;
+      const m=L.marker(mp,{icon:legIcon(lc,s.label),interactive:false,keyboard:false,zIndexOffset:600});
+      labels.push(m); routes.push({line:pl, pts:[s.a,s.b], label:m, profile:(s.mode==='walk'?'foot':'car')});
+    } else {
+      const pl=L.polyline([s.a,s.b],st); if(s.mode==='boat')pl._boat=true; lines.push(pl);
+      const mp=[(s.a[0]+s.b[0])/2,(s.a[1]+s.b[1])/2];
+      const m=L.marker(mp,{icon:legIcon(st.color,s.label),interactive:false,keyboard:false,zIndexOffset:600});
+      labels.push(m);
+    }
+  });
   layers[day.d]={markers,lines,labels,routes};
 });
 function routeIndex(day,i){return i+1;}
